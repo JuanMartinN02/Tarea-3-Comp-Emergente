@@ -4,119 +4,205 @@ import torch.optim as optim
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 import numpy as np
+import os
 
-# Selección del tipo de red
-network_type = input("Ingrese el tipo de red (rectangular/convolucional) (por defecto rectangular): ") or "rectangular"
-
-# Configuración de la red
-num_hidden_layers = int(input("Ingrese el número de capas ocultas (por defecto 2): ") or 2)
-hidden_nodes = int(input("Ingrese el número de nodos por capa oculta (por defecto 512): ") or 512)
-num_epochs = int(input("Ingrese el número de épocas de entrenamiento (por defecto 10): ") or 10)
-batch_size = int(input("Ingrese el tamaño del batch (por defecto 64): ") or 64)
-learning_rate = float(input("Ingrese la tasa de aprendizaje (por defecto 0.001): ") or 0.001)
-
-# Carga del conjunto de datos Fashion MNIST
-transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.5,), (0.5,))
-])
-
-train_dataset = datasets.FashionMNIST(root='./data', train=True, download=True, transform=transform)
-test_dataset = datasets.FashionMNIST(root='./data', train=False, download=True, transform=transform)
-
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-
-# --- Definición de las redes ---
-
-# Red totalmente conectada (rectangular)
+# Definicion de la red rectangular
 class FashionMLP(nn.Module):
     def __init__(self, input_size=784, hidden_size=512, num_hidden_layers=2, num_classes=10):
         super(FashionMLP, self).__init__()
-        layers = []
-        layers.append(nn.Linear(input_size, hidden_size))
-        layers.append(nn.ReLU())
+        capas = []
+        capas.append(nn.Linear(input_size, hidden_size))
+        capas.append(nn.ReLU())
         for _ in range(num_hidden_layers - 1):
-            layers.append(nn.Linear(hidden_size, hidden_size))
-            layers.append(nn.ReLU())
-        layers.append(nn.Linear(hidden_size, num_classes))
-        self.network = nn.Sequential(*layers)
+            capas.append(nn.Linear(hidden_size, hidden_size))
+            capas.append(nn.ReLU())
+        capas.append(nn.Linear(hidden_size, num_classes))
+        self.red = nn.Sequential(*capas)
 
     def forward(self, x):
         x = x.view(x.size(0), -1)
-        return self.network(x)
+        return self.red(x)
 
-# Red convolucional con interpolación lineal de neuronas
+# Definicion de la red convolucional
 class FashionConvNet(nn.Module):
     def __init__(self, num_hidden_layers=2, num_classes=10):
         super(FashionConvNet, self).__init__()
-
-        # Bloques convolucionales simples
-        self.features = nn.Sequential(
+        self.caracteristicas = nn.Sequential(
             nn.Conv2d(1, 16, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.MaxPool2d(2),  # 16 x 14 x 14
+            nn.MaxPool2d(2),
             nn.Conv2d(16, 32, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.MaxPool2d(2)   # 32 x 7 x 7
+            nn.MaxPool2d(2)
         )
-
-        # Tamaño de entrada de las capas totalmente conectadas
-        input_size = 32 * 7 * 7  # 1568
-
-        # Interpolación lineal de neuronas entre 784 y 10
-        interpolated = np.linspace(784, 10, num_hidden_layers + 2)[1:-1].astype(int).tolist()
-
-        # Construcción de las capas totalmente conectadas
-        layers = []
-        in_size = input_size
-        for h in interpolated:
-            layers.append(nn.Linear(in_size, h))
-            layers.append(nn.ReLU())
-            in_size = h
-        layers.append(nn.Linear(in_size, num_classes))
-
-        self.classifier = nn.Sequential(*layers)
+        entrada_fc = 32 * 7 * 7
+        interpolado = np.linspace(784, 10, num_hidden_layers + 2)[1:-1].astype(int).tolist()
+        capas = []
+        actual = entrada_fc
+        for h in interpolado:
+            capas.append(nn.Linear(actual, h))
+            capas.append(nn.ReLU())
+            actual = h
+        capas.append(nn.Linear(actual, num_classes))
+        self.clasificador = nn.Sequential(*capas)
 
     def forward(self, x):
-        x = self.features(x)
+        x = self.caracteristicas(x)
         x = x.view(x.size(0), -1)
-        return self.classifier(x)
+        return self.clasificador(x)
 
-# Inicialización del modelo
-if network_type.lower().startswith("conv"):
-    model = FashionConvNet(num_hidden_layers=num_hidden_layers, num_classes=10)
-else:
-    model = FashionMLP(input_size=784, hidden_size=hidden_nodes, num_hidden_layers=num_hidden_layers, num_classes=10)
+# Cargar datos
+def cargar_datos(batch_size):
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,))
+    ])
+    train_dataset = datasets.FashionMNIST(root='./data', train=True, download=True, transform=transform)
+    test_dataset = datasets.FashionMNIST(root='./data', train=False, download=True, transform=transform)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    return train_loader, test_loader
 
-# Definición de la función de pérdida y optimizador
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+# Entrenamiento
+def entrenar(modelo, train_loader, criterio, optimizador, num_epochs):
+    for epoca in range(num_epochs):
+        modelo.train()
+        perdida_acumulada = 0.0
+        for imagenes, etiquetas in train_loader:
+            optimizador.zero_grad()
+            salidas = modelo(imagenes)
+            perdida = criterio(salidas, etiquetas)
+            perdida.backward()
+            optimizador.step()
+            perdida_acumulada += perdida.item()
+        print(f"Epoca [{epoca+1}/{num_epochs}], Perdida promedio: {perdida_acumulada/len(train_loader):.4f}")
 
-# Bucle de entrenamiento
-for epoch in range(num_epochs):
-    model.train()
-    running_loss = 0.0
-    for images, labels in train_loader:
-        optimizer.zero_grad()
-        outputs = model(images)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
-        running_loss += loss.item()
+# Evaluacion
+def evaluar(modelo, test_loader):
+    modelo.eval()
+    correctas = 0
+    total = 0
+    with torch.no_grad():
+        for imagenes, etiquetas in test_loader:
+            salidas = modelo(imagenes)
+            _, predicho = torch.max(salidas.data, 1)
+            total += etiquetas.size(0)
+            correctas += (predicho == etiquetas).sum().item()
+    precision = 100 * correctas / total
+    print(f"Precision en el conjunto de prueba: {precision:.2f}%")
 
-    print(f"Época [{epoch+1}/{num_epochs}], Pérdida: {running_loss/len(train_loader):.4f}")
+# Guardar modelo
+def guardar_modelo_completo(modelo, nombre_archivo, tipo, num_hidden_layers, hidden_nodes):
+    datos = {
+        'modelo': modelo.state_dict(),
+        'tipo': tipo,
+        'num_hidden_layers': num_hidden_layers,
+        'hidden_nodes': hidden_nodes
+    }
+    torch.save(datos, nombre_archivo)
+    print(f"Modelo guardado en '{nombre_archivo}'.")
 
-# Evaluación del modelo
-model.eval()
-correct = 0
-total = 0
+# Cargar modelo
+def cargar_modelo_completo(nombre_archivo):
+    if not os.path.exists(nombre_archivo):
+        print("Archivo no encontrado.")
+        return None
 
-with torch.no_grad():
-    for images, labels in test_loader:
-        outputs = model(images)
-        _, predicted = torch.max(outputs.data, 1)
-        total += labels.size(0)
-        correct += (predicted == labels).sum().item()
+    datos = torch.load(nombre_archivo)
+    tipo = datos['tipo']
+    num_hidden_layers = datos['num_hidden_layers']
+    hidden_nodes = datos['hidden_nodes']
 
-print(f"Precisión en el conjunto de prueba: {100 * correct / total:.2f}%")
+    if tipo == "convolucional":
+        modelo = FashionConvNet(num_hidden_layers=num_hidden_layers)
+    else:
+        modelo = FashionMLP(hidden_size=hidden_nodes, num_hidden_layers=num_hidden_layers)
+
+    modelo.load_state_dict(datos['modelo'])
+    modelo.eval()
+    print(f"Modelo '{nombre_archivo}' cargado exitosamente.")
+    return modelo
+# Menu principal
+def main():
+    modelo = None
+    train_loader, test_loader = None, None
+
+    while True:
+        print("\nMenu Principal")
+        print("1. Crear nueva red")
+        print("2. Cargar red desde archivo")
+        print("3. Entrenar red")
+        print("4. Evaluar red")
+        print("5. Guardar red")
+        print("6. Salir")
+
+        opcion = input("Seleccione una opcion: ")
+
+        if opcion == "1":
+            tipo = input("Tipo de red (rectangular/convolucional) (por defecto rectangular): ") or "rectangular"
+            try:
+                num_hidden_layers = int(input("Numero de capas ocultas (por defecto 2): ") or 2)
+                hidden_nodes = int(input("Nodos por capa oculta (solo rectangular) (por defecto 512): ") or 512)
+                batch_size = int(input("Tamaño del batch (por defecto 64): ") or 64)
+                learning_rate = float(input("Tasa de aprendizaje (por defecto 0.001): ") or 0.001)
+            except ValueError:
+                print("Entrada invalida.")
+                continue
+
+            train_loader, test_loader = cargar_datos(batch_size)
+            if tipo.lower().startswith("conv"):
+                modelo = FashionConvNet(num_hidden_layers=num_hidden_layers)
+            else:
+                modelo = FashionMLP(hidden_size=hidden_nodes, num_hidden_layers=num_hidden_layers)
+            criterio = nn.CrossEntropyLoss()
+            optimizador = optim.Adam(modelo.parameters(), lr=learning_rate)
+            print("Red creada exitosamente.")
+
+        elif opcion == "2":
+            archivo = input("Ingrese el nombre del archivo (.pth): ")
+            modelo = cargar_modelo_completo(archivo)
+            if modelo:
+                # Recuperar metadatos del archivo
+                datos = torch.load(archivo)
+                tipo = datos['tipo']
+                num_hidden_layers = datos['num_hidden_layers']
+                hidden_nodes = datos['hidden_nodes']
+                batch_size = 64  
+
+                train_loader, test_loader = cargar_datos(batch_size)
+                criterio = nn.CrossEntropyLoss()
+                learning_rate = 0.001  
+                optimizador = optim.Adam(modelo.parameters(), lr=learning_rate)
+
+        elif opcion == "3":
+            if modelo and train_loader:
+                try:
+                    num_epochs = int(input("Numero de epocas (por defecto 10): ") or 10)
+                except ValueError:
+                    print("Entrada invalida.")
+                    continue
+                entrenar(modelo, train_loader, criterio, optimizador, num_epochs)
+            else:
+                print("Primero debe crear o cargar una red.")
+
+        elif opcion == "4":
+            if modelo and test_loader:
+                evaluar(modelo, test_loader)
+            else:
+                print("Primero debe crear o cargar una red.")
+
+        elif opcion == "5":
+            if modelo:
+                archivo = input("Nombre del archivo para guardar (.pth): ")
+                guardar_modelo_completo(modelo, archivo, tipo, num_hidden_layers, hidden_nodes)
+            else:
+                print("No hay red para guardar.")
+
+        elif opcion == "6":
+            print("Saliendo del programa.")
+            break
+
+        else:
+            print("Opcion invalida. Intente de nuevo.")
+
+main()
